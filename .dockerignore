@@ -1,0 +1,16 @@
+# Build context is the repo root (deploy/Dockerfile.*). Keep host artifacts out:
+# host node_modules would overwrite the image's Linux ones after `npm ci`.
+.git
+.env
+.env.*
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+backend/var
+web/dist
+# fixtures/ and glossary/ are bind-mounted by compose, not copied.
+fixtures
+glossary
+docs
+CONTEXT.md

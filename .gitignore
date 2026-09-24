@@ -4,6 +4,7 @@ CONTEXT.md
 docs/adr/
 docs/VIBEATHON.md
 docs/contracts/agent-playbook.md
+docs/HANDOFF.md
 
 # Secretos
 .env
@@ -19,5 +20,7 @@ venv/
 backend/var/exports/*
 !backend/var/exports/.gitkeep
 
-# Clip de YouTube bajado a mano (el stand-in silence-demo.wav sí se versiona)
-fixtures/nerdearla-demo.wav
+# Clips de YouTube bajados a mano (el stand-in silence-demo.wav sí se versiona)
+fixtures/nerdearla-demo*.wav
+fixtures/*.mp3
+fixtures/_raw.*

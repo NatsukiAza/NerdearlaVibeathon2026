@@ -48,6 +48,28 @@ def should_pace_realtime(path: str | None = None) -> bool:
     return True
 
 
+class _RealtimePacer:
+    """Sleep until the wall clock reaches the audio position (t0 + samples/rate).
+
+    Sleeping a fixed chunk duration per chunk drifts (send time + timer
+    granularity, ~15 ms on Windows) and after a minute the fixture is several
+    seconds behind real time. Pacing against a deadline keeps it live.
+    """
+
+    def __init__(self) -> None:
+        self._t0: float | None = None
+
+    async def wait_until(self, samples_total: int) -> None:
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        if self._t0 is None:
+            self._t0 = now
+        target = self._t0 + samples_total / SAMPLE_RATE
+        delay = target - now
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
 async def _yield_pcm_chunks(
     pcm: bytes,
     *,
@@ -55,6 +77,7 @@ async def _yield_pcm_chunks(
 ) -> AsyncIterator[tuple[bytes, int]]:
     samples_total = 0
     offset = 0
+    pacer = _RealtimePacer()
     while offset < len(pcm):
         chunk = pcm[offset : offset + CHUNK_BYTES]
         if len(chunk) % BYTES_PER_SAMPLE:
@@ -65,9 +88,7 @@ async def _yield_pcm_chunks(
         samples_total += len(chunk) // BYTES_PER_SAMPLE
         yield chunk, samples_total
         if pace:
-            # sleep proportional to chunk duration so the demo is live
-            duration_s = (len(chunk) // BYTES_PER_SAMPLE) / SAMPLE_RATE
-            await asyncio.sleep(duration_s)
+            await pacer.wait_until(samples_total)
 
 
 def _wav_to_pcm_s16le_16k_mono(path: Path) -> bytes:
@@ -166,6 +187,7 @@ async def url_pcm(url: str) -> AsyncIterator[tuple[bytes, int]]:
     proc = await asyncio.to_thread(_ffmpeg_url_to_pcm_stream, url)
     assert proc.stdout is not None
     samples_total = 0
+    pacer = _RealtimePacer()
     try:
         while True:
             chunk = await asyncio.to_thread(proc.stdout.read, CHUNK_BYTES)
@@ -178,8 +200,7 @@ async def url_pcm(url: str) -> AsyncIterator[tuple[bytes, int]]:
             samples_total += len(chunk) // BYTES_PER_SAMPLE
             yield chunk, samples_total
             if pace:
-                duration_s = (len(chunk) // BYTES_PER_SAMPLE) / SAMPLE_RATE
-                await asyncio.sleep(duration_s)
+                await pacer.wait_until(samples_total)
     finally:
         proc.kill()
         try:

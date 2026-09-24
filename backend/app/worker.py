@@ -64,23 +64,93 @@ async def run_session(session_id: str) -> None:
         store.update_status(session_id, bump_reconnects=True)
 
     pending: dict[str, asyncio.Task[None]] = {}
+    # utteranceIds already finalized: late interim translations are dropped so they
+    # cannot re-open the live line after the final was published.
+    finalized: set[str] = set()
+    # Finals are translated in order (export order) by one Task that drains the
+    # backlog into batches, so the SpeechBackend loop never waits on the model.
+    final_queue: asyncio.Queue[Cue | None] = asyncio.Queue()
+    FINAL_BATCH_MAX = 8
+    # Translators may offer translate_many(cues, dests, glossary_terms=, must=) to
+    # serve several Cues × languages in one model call (GeminiTranslator does).
+    translate_many = getattr(translator, "translate_many", None)
+
+    async def translate_to(original: Cue, dest: TrackLang) -> Cue:
+        terms = list(rec.glossary.terms)
+        return await translator.translate(original, dest, glossary_terms=terms)
 
     async def emit_translated(original: Cue, dest: TrackLang) -> None:
+        store.publish_cue(session_id, await translate_to(original, dest))
+
+    async def translate_batch(
+        cues: list[Cue], *, must: bool
+    ) -> dict[tuple[str, TrackLang], Cue]:
+        """{(cue.id, dest): Cue} for every non-alias destination; may omit interims."""
         terms = list(rec.glossary.terms)
-        translated = await translator.translate(
-            original, dest, glossary_terms=terms
-        )
-        store.publish_cue(session_id, translated)
+        if translate_many is not None:
+            dests: list[TrackLang] = [d for d in DEST_TRACKS if d != cues[0].sourceLang]
+            return await translate_many(cues, dests, glossary_terms=terms, must=must)
+        out: dict[tuple[str, TrackLang], Cue] = {}
+        for c in cues:
+            for d in DEST_TRACKS:
+                if d != c.sourceLang:
+                    out[(c.id, d)] = await translator.translate(c, d, glossary_terms=terms)
+        return out
+
+    async def final_worker() -> None:
+        while True:
+            first = await final_queue.get()
+            if first is None:
+                return
+            batch = [first]
+            while len(batch) < FINAL_BATCH_MAX:
+                try:
+                    nxt = final_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if nxt is None:
+                    final_queue.put_nowait(None)  # keep the sentinel for the next loop
+                    break
+                batch.append(nxt)
+            try:
+                results = await translate_batch(batch, must=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("final translation failed (%s)", session_id)
+                continue
+            for c in batch:
+                for d in DEST_TRACKS:
+                    if d == c.sourceLang:
+                        continue
+                    translated = results.get((c.id, d))
+                    if translated is not None:
+                        store.publish_cue(session_id, translated)
+
+    final_workers = [asyncio.create_task(final_worker(), name=f"translate-{session_id}")]
 
     async def schedule_interim(original: Cue) -> None:
         uid = original.utteranceId
 
         async def _debounced() -> None:
             await asyncio.sleep(TRANSLATE_DEBOUNCE_MS / 1000)
-            for dest in DEST_TRACKS:
-                if dest == original.sourceLang:
+            if uid in finalized:
+                return
+            try:
+                results = await translate_batch([original], must=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("interim translation failed: %s", exc)
+                return
+            if uid in finalized:
+                return
+            for d in DEST_TRACKS:
+                if d == original.sourceLang:
                     continue
-                await emit_translated(original, dest)
+                translated = results.get((original.id, d))
+                if translated is not None:
+                    store.publish_cue(session_id, translated)
 
         old = pending.pop(uid, None)
         if old and not old.done():
@@ -112,6 +182,7 @@ async def run_session(session_id: str) -> None:
         ):
             store.publish_cue(session_id, cue)
 
+            # Alias Track (dest == sourceLang): no model call, publish right away.
             for dest in DEST_TRACKS:
                 if dest == cue.sourceLang:
                     await emit_translated(cue, dest)
@@ -119,13 +190,18 @@ async def run_session(session_id: str) -> None:
             if cue.kind == "interim":
                 await schedule_interim(cue)
             else:
+                finalized.add(cue.utteranceId)
+                if len(finalized) > 5000:
+                    finalized.clear()
                 old = pending.pop(cue.utteranceId, None)
                 if old and not old.done():
                     old.cancel()
-                for dest in DEST_TRACKS:
-                    if dest == cue.sourceLang:
-                        continue
-                    await emit_translated(cue, dest)
+                if any(dest != cue.sourceLang for dest in DEST_TRACKS):
+                    final_queue.put_nowait(cue)
+
+        # Audio ended: let queued final translations finish before the Task exits.
+        final_queue.put_nowait(None)
+        await asyncio.gather(*final_workers, return_exceptions=True)
 
     except FileNotFoundError as exc:
         logger.warning("fixture missing for session %s: %s", session_id, exc)
@@ -157,6 +233,9 @@ async def run_session(session_id: str) -> None:
         for t in pending.values():
             if not t.done():
                 t.cancel()
+        for w in final_workers:
+            if not w.done():
+                w.cancel()
 
 
 async def start_session(session_id: str) -> SessionRecord:

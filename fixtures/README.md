@@ -34,9 +34,9 @@ En PowerShell el paso 3 es `Remove-Item fixtures\_raw.wav`.
 
 ## Uso en Sesiones
 
-Al crear una Sesión, apuntá la FuenteDeAudio al path del fixture, por ejemplo:
+Al crear una Sesión, el `path` es **relativo a `fixtures/`** (no incluyas el directorio):
 
-- Fake / smoke: `fixtures/silence-demo.wav`
-- Demo jurado: `fixtures/nerdearla-demo.wav`
+- Fake / smoke: `silence-demo.wav`
+- Demo jurado: `nerdearla-demo.wav`
 
 Para dos Sesiones en paralelo, podés reutilizar el mismo wav o crear un segundo extracto (`fixtures/nerdearla-demo-b.wav`) con los mismos comandos.
