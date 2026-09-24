@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thebestofyou.local/contracts/cue.schema.json",
+  "title": "Cue",
+  "description": "Unidad de subtítulo. Reloj de Sesión en milisegundos desde t0 (start), derivado de samples PCM / 16000. El rotate de Gemini no resetea este reloj.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "utteranceId",
+    "sessionId",
+    "track",
+    "sourceLang",
+    "text",
+    "kind",
+    "startedAtMs",
+    "emittedAtMs"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Id de este evento. Cada interino actualizado y cada final tienen id propio."
+    },
+    "utteranceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Estable mientras dura un aliento. El cliente reemplaza el renglón vivo por utteranceId. El final cierra ese utteranceId. Tras un rotate de Gemini, no se reutiliza un utteranceId a caballo."
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "track": {
+      "type": "string",
+      "enum": ["original", "es", "en", "pt"]
+    },
+    "sourceLang": {
+      "type": "string",
+      "description": "Idioma detectado del audio, BCP-47 corto: es, en, pt.",
+      "pattern": "^(es|en|pt)$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 0
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["interim", "final"]
+    },
+    "startedAtMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Inicio del utterance en el RelojDeSesion."
+    },
+    "endedAtMs": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Fin del utterance. Obligatorio en final; null en interim."
+    },
+    "emittedAtMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cuando el servidor emitió este Cue. Latencia = emittedAtMs - startedAtMs."
+    }
+  }
+}

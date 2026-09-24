@@ -1,0 +1,277 @@
+openapi: 3.1.0
+info:
+  title: Conference live captions
+  version: "1.0.0"
+  description: >
+    Superficie congelada. Cue = docs/contracts/cue.schema.json.
+    SSE: event cue | status | error. WebSocket de mic: binario PCM s16le 16 kHz mono.
+servers:
+  - url: http://localhost:8000
+paths:
+  /api/sessions:
+    get:
+      summary: Listar Sesiones
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      summary: Crear Sesión (idle)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSession"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /api/sessions/{sessionId}:
+    get:
+      summary: Detalle de Sesión
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Not found
+  /api/sessions/{sessionId}/start:
+    post:
+      summary: Arrancar la Task de la Sesión
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: live o degraded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "409":
+          description: Ya live
+  /api/sessions/{sessionId}/stop:
+    post:
+      summary: Detener la Task
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /api/sessions/{sessionId}/tracks/{lang}/live:
+    get:
+      summary: SSE de Cues de un Track
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/Lang"
+      responses:
+        "200":
+          description: >
+            text/event-stream. event=cue data=Cue JSON.
+            event=status data=Session JSON.
+            event=error data={message, atMs}.
+            Last-Event-ID = Cue.id para reconexión (solo rehidrata finales).
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /api/sessions/{sessionId}/export/{lang}:
+    get:
+      summary: ExportDeTranscript de Cues finales
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/Lang"
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [srt, vtt, txt]
+      responses:
+        "200":
+          description: Archivo
+          content:
+            text/plain:
+              schema:
+                type: string
+            application/x-subrip:
+              schema:
+                type: string
+            text/vtt:
+              schema:
+                type: string
+  /api/sessions/{sessionId}/glossary:
+    put:
+      summary: Reemplazar GlosarioTécnico de la Sesión
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Glossary"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Glossary"
+  /api/production/events:
+    get:
+      summary: SSE de estado de todas las Sesiones
+      security:
+        - productionToken: []
+      responses:
+        "200":
+          description: event=session data=Session JSON, un evento inicial por Sesión y después diffs
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          description: Token ausente o malo
+  /api/sessions/{sessionId}/mic:
+    get:
+      summary: Upgrade WebSocket — PCM s16le 16 kHz mono, frames ~100 ms
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: source.kind no es mic
+components:
+  securitySchemes:
+    productionToken:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+      description: PRODUCTION_TOKEN. Solo /api/production/events. El resto de /api es abierto en la LAN de la conferencia.
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Lang:
+      name: lang
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [original, es, en, pt]
+  schemas:
+    CreateSession:
+      type: object
+      additionalProperties: false
+      required: [name, source]
+      properties:
+        name:
+          type: string
+        source:
+          $ref: "#/components/schemas/AudioSource"
+        glossary:
+          $ref: "#/components/schemas/Glossary"
+    AudioSource:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [fixture, mic, url]
+          description: url es http(s) de audio o HLS. No YouTube.
+        path:
+          type: string
+          description: Path relativo a fixtures/ si kind=fixture. URL si kind=url. Ausente si mic.
+    Glossary:
+      type: object
+      additionalProperties: false
+      required: [terms]
+      properties:
+        terms:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [term]
+            properties:
+              term:
+                type: string
+              doNotTranslate:
+                type: boolean
+                default: true
+    Session:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - status
+        - source
+        - sourceLang
+        - reconnects
+        - lastError
+        - latency
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [idle, live, degraded, down, stopped]
+        source:
+          $ref: "#/components/schemas/AudioSource"
+        sourceLang:
+          type: ["string", "null"]
+          enum: [es, en, pt, null]
+        reconnects:
+          type: integer
+          minimum: 0
+        lastError:
+          type: ["object", "null"]
+          properties:
+            message:
+              type: string
+            atMs:
+              type: integer
+            code:
+              type: string
+        latency:
+          type: ["object", "null"]
+          properties:
+            interimP50Ms:
+              type: integer
+            interimP95Ms:
+              type: integer
+            finalP50Ms:
+              type: integer
+            finalP95Ms:
+              type: integer
+    Cue:
+      description: Ver cue.schema.json
+      type: object
+```

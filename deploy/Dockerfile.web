@@ -1,0 +1,26 @@
+# Vite SPA — expects web/package.json; builds then serves dist on 5173.
+FROM node:22-bookworm-slim AS build
+
+WORKDIR /app
+
+ARG VITE_API_BASE=http://localhost:8000
+ENV VITE_API_BASE=$VITE_API_BASE
+
+COPY web/package.json web/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+COPY web/ ./
+RUN npm run build
+
+FROM node:22-bookworm-slim
+
+WORKDIR /app
+
+RUN npm install -g serve@14
+
+COPY --from=build /app/dist ./dist
+
+EXPOSE 5173
+
+# Static serve of Vite dist. Alternative: vite preview --host 0.0.0.0 --port 5173
+CMD ["serve", "-s", "dist", "-l", "5173"]

@@ -1,0 +1,23 @@
+# Bitácora del equipo: queda en disco, no en el repo público.
+# Siguen versionados docs/contracts/openapi.yaml y docs/contracts/cue.schema.json.
+CONTEXT.md
+docs/adr/
+docs/VIBEATHON.md
+docs/contracts/agent-playbook.md
+
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+backend/var/exports/*
+!backend/var/exports/.gitkeep
+
+# Clip de YouTube bajado a mano (el stand-in silence-demo.wav sí se versiona)
+fixtures/nerdearla-demo.wav
