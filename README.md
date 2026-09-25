@@ -34,6 +34,14 @@ pip install -e .
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+En PowerShell, `pip` y `uvicorn` suelen no estar en el PATH aunque `python` sí responda (`CommandNotFoundException`). Instalá y arrancá por el módulo de Python:
+
+```powershell
+cd backend
+python -m pip install -e .
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
 Terminal 2 — web:
 
 ```bash
@@ -42,7 +50,7 @@ npm ci
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-Crear y arrancar **dos sesiones** sobre el audio de prueba que viene en el repo (`fixtures/silence-demo.wav`, ~20 s de silencio; el `path` es relativo a `fixtures/`, sin el directorio):
+Crear y arrancar **dos sesiones** sobre el audio de prueba que viene en el repo (`fixtures/silence-demo.wav`, ~20 s de silencio; el `path` es relativo a `fixtures/`, sin el directorio). Ese archivo es el que puede clonar cualquiera. Sin API key el texto no sale del wav: es un guion fijo, y el silencio solo marca el ritmo. Para la charla real, usá `nerdearla-demo.wav` en la sección siguiente.
 
 ```bash
 curl -s -X POST http://localhost:8000/api/sessions \
@@ -60,11 +68,14 @@ Con el `id` que devuelve cada una:
 curl -s -X POST http://localhost:8000/api/sessions/ID/start
 ```
 
-En PowerShell, el equivalente del alta:
+En PowerShell, `curl` es un alias de `Invoke-WebRequest`: no acepta `-H`, `-d` ni `\` al final de la línea. Usá esto:
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8000/api/sessions -ContentType 'application/json' `
-  -Body '{"name":"Charla ES","source":{"kind":"fixture","path":"silence-demo.wav"}}'
+Invoke-RestMethod -Method Post http://localhost:8000/api/sessions -ContentType 'application/json' -Body '{"name":"Charla ES","source":{"kind":"fixture","path":"silence-demo.wav"}}'
+
+Invoke-RestMethod -Method Post http://localhost:8000/api/sessions -ContentType 'application/json' -Body '{"name":"Talk EN","source":{"kind":"fixture","path":"silence-demo.wav"}}'
+
+Invoke-RestMethod -Method Post http://localhost:8000/api/sessions/ID/start
 ```
 
 Abrí:
@@ -81,8 +92,26 @@ El backend de demostración usa el **nombre** de la sesión para el idioma: si c
 ## Con audio real (Gemini)
 
 1. Creá una API key en [Google AI Studio](https://aistudio.google.com/apikey) y pegala en `.env` como `GEMINI_API_KEY`. No hace falta tocar `SPEECH_BACKEND`: con key usa Gemini, sin key usa el backend de demostración.
-2. El repo **no** incluye audio de YouTube. Bajá un extracto de una charla de Nerdearla y convertilo a PCM 16 kHz mono con los comandos de [`fixtures/README.md`](fixtures/README.md). El resultado queda en `fixtures/nerdearla-demo.wav` y no se commitea.
-3. Creá la sesión con `"path": "nerdearla-demo.wav"` y arrancala igual que arriba.
+2. El repo **no** incluye audio de YouTube. Bajá un extracto de 3–8 minutos de una charla de Nerdearla y convertilo a PCM 16 kHz mono con los comandos de [`fixtures/README.md`](fixtures/README.md). El resultado queda en `fixtures/nerdearla-demo.wav` y no se commitea.
+3. Creá y arrancá la sesión con ese archivo (el `path` es relativo a `fixtures/`, sin el directorio):
+
+```bash
+curl -s -X POST http://localhost:8000/api/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Charla ES","source":{"kind":"fixture","path":"nerdearla-demo.wav"}}'
+
+curl -s -X POST http://localhost:8000/api/sessions/ID/start
+```
+
+En PowerShell (`curl` acá no es el curl de bash):
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8000/api/sessions -ContentType 'application/json' -Body '{"name":"Charla ES","source":{"kind":"fixture","path":"nerdearla-demo.wav"}}'
+
+Invoke-RestMethod -Method Post http://localhost:8000/api/sessions/ID/start
+```
+
+Con la key puesta, Gemini transcribe ese audio. `silence-demo.wav` no sirve para este paso: no hay habla que transcribir.
 
 La transcripción es Gemini Live (`gemini-3.5-transcribe-live`), una conexión por sesión. La traducción es texto (`gemini-3.5-flash`), no una segunda pasada de audio. La key vive solo en el servidor; el navegador no la ve.
 
@@ -133,6 +162,14 @@ La web se construye con `VITE_API_BASE=http://localhost:8000`: el navegador del 
 ```bash
 cd backend
 pip install -e ".[dev]"
+python -m pytest -q
+```
+
+En PowerShell:
+
+```powershell
+cd backend
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
