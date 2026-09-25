@@ -484,6 +484,8 @@ def _build_config(vocab: list[str]) -> Any:
         if vocab:
             atc_kwargs["custom_vocabulary"] = list(dict.fromkeys(vocab))
         atc_kwargs["language_codes"] = ["es", "en", "pt"]
+        # SMART drops fillers, repetitions and false starts. VERBATIM keeps them.
+        atc_kwargs["mode"] = "SMART"
         kwargs["input_audio_transcription"] = types.AudioTranscriptionConfig(**atc_kwargs)
     except Exception:
         try:

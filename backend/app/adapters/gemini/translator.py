@@ -5,10 +5,14 @@ Model ids live in ``models.py``. Verified 24 sep 2026 against a free-tier key:
 quota; ``gemini-3.5-flash-lite`` allows 15 requests/min. So this adapter:
 
 - translates one or more Cues to *all* destination languages in a single request
-  (``translate_many``), JSON in/out;
+  (``translate_many``), JSON in/out, with thinking set to ``minimal`` (the
+  default on ``gemini-3.5-flash`` is ``medium``, and those thought tokens are
+  billed as output);
 - honours the ``retry in Xs`` of a 429 per model (shared across Sessions) and
-  falls through the chain in ``models.py``;
-- skips interims while every model is blocked (a late interim is worthless) but
+  falls through the chain in ``models.py`` for finals only;
+- interims stay on ``gemini-3.5-flash-lite``. Falling through to Flash spends a
+  full thought trace on a line that the next partial will replace;
+- skips interims while lite is blocked (a late interim is worthless) but
   waits for finals, echoing ``[lang] text`` only as a last resort.
 
 ``translate`` (the port) is kept for single Cues; it delegates to ``translate_many``.
@@ -24,7 +28,11 @@ import time
 from typing import Any, ClassVar
 from uuid import uuid4
 
-from app.adapters.gemini.models import TRANSLATOR_FALLBACK_MODELS, TRANSLATOR_MODEL
+from app.adapters.gemini.models import (
+    INTERIM_TRANSLATOR_MODEL,
+    TRANSLATOR_FALLBACK_MODELS,
+    TRANSLATOR_MODEL,
+)
 from app.domain.models import Cue, GlossaryTerm, TrackLang
 
 logger = logging.getLogger(__name__)
@@ -175,12 +183,14 @@ class GeminiTranslator:
             "temperature": 0.2,
             "response_mime_type": "application/json",
             "response_schema": schema,
+            "thinking_config": _minimal_thinking(),
         }
         timeout = FINAL_TIMEOUT_S if must else INTERIM_TIMEOUT_S
         deadline = time.monotonic() + (FINAL_MAX_WAIT_S if must else 0.0)
+        bad_parses = 0
 
         while True:
-            model = self._pick_model()
+            model = self._pick_model(interim=not must)
             if model is None:
                 wait = self._next_unblock() - time.monotonic()
                 if not must or time.monotonic() + max(wait, 0.0) > deadline:
@@ -209,18 +219,31 @@ class GeminiTranslator:
             parsed = _parse_json(getattr(resp, "text", None) or _resp_text(resp) or "")
             if isinstance(parsed, dict) and all(isinstance(parsed.get(d), list) for d in targets):
                 return {d: [str(x) for x in parsed[d]] for d in targets}
-            logger.warning("translator %s returned unparseable JSON; retrying once", model)
+            logger.warning("translator %s returned unparseable JSON", model)
+            bad_parses += 1
             self._block(model, 1.0)
+            if bad_parses >= 2:
+                return None
 
-    def _pick_model(self) -> str | None:
+    def _pick_model(self, *, interim: bool) -> str | None:
         now = time.monotonic()
-        for m in (TRANSLATOR_MODEL, *TRANSLATOR_FALLBACK_MODELS):
+        if interim:
+            # Lite only. Flash's default thinking is billed as output, and a
+            # partial caption is replaced seconds later.
+            chain = (INTERIM_TRANSLATOR_MODEL,)
+        else:
+            chain = (TRANSLATOR_MODEL, *TRANSLATOR_FALLBACK_MODELS)
+        seen: set[str] = set()
+        for m in chain:
+            if m in seen:
+                continue
+            seen.add(m)
             if self._blocked_until.get(m, 0.0) <= now:
                 return m
         return None
 
     def _next_unblock(self) -> float:
-        chain = (TRANSLATOR_MODEL, *TRANSLATOR_FALLBACK_MODELS)
+        chain = (INTERIM_TRANSLATOR_MODEL, TRANSLATOR_MODEL, *TRANSLATOR_FALLBACK_MODELS)
         return min(self._blocked_until.get(m, 0.0) for m in chain)
 
     def _block(self, model: str, seconds: float) -> None:
@@ -230,6 +253,17 @@ class GeminiTranslator:
 
 
 # -- helpers ---------------------------------------------------------------
+
+
+def _minimal_thinking() -> Any:
+    """Keep thought tokens off a caption translation.
+
+    ``gemini-3.5-flash`` defaults to medium and bills every thought as output.
+    ``minimal`` is the closest these models have to not thinking.
+    """
+    from google.genai import types
+
+    return types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)
 
 
 def _is_retryable(exc: BaseException) -> bool:

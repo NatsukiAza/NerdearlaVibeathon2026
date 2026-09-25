@@ -104,7 +104,9 @@ CHUNK_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MS // 1000  # 3200
 LATENCY_DEGRADED_P95_MS = 4000
 GEMINI_ROTATE_MS = 8 * 60 * 1000  # 8 minutes
 GEMINI_DRAIN_MS = 2000
-TRANSLATE_DEBOUNCE_MS = 300
+# Collapse ASR partials. 300 ms fired on almost every interim and, once Flash Lite
+# was blocked, each one landed on Gemini 3.5 Flash (peak 815 RPM).
+TRANSLATE_DEBOUNCE_MS = 1000
 
 
 def samples_to_ms(samples: int) -> int:

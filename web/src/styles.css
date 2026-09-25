@@ -393,8 +393,10 @@ html.overlay-mode #root {
 .overlay-finals {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.55rem;
   margin-bottom: 1rem;
+  width: 100%;
 }
 
 .overlay-final {
@@ -402,8 +404,10 @@ html.overlay-mode #root {
   font-size: clamp(1.4rem, 2.4vw, 2.1rem);
   font-weight: 550;
   line-height: 1.25;
-  color: rgba(255, 255, 255, 0.78);
+  color: #fff;
   margin: 0;
+  text-align: center;
+  max-width: 80%;
   text-shadow:
     0 0 4px #000,
     0 2px 8px #000,
@@ -420,6 +424,9 @@ html.overlay-mode #root {
   line-height: 1.2;
   color: #fff;
   margin: 0;
+  text-align: center;
+  max-width: 80%;
+  align-self: center;
   text-shadow:
     0 0 6px #000,
     0 3px 14px rgba(0, 0, 0, 0.95),

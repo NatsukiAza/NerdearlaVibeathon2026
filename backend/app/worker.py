@@ -64,6 +64,9 @@ async def run_session(session_id: str) -> None:
         store.update_status(session_id, bump_reconnects=True)
 
     pending: dict[str, asyncio.Task[None]] = {}
+    # Latest interim per utterance. A newer partial updates this instead of
+    # cancelling an HTTP call that already left (the cancel still counts as RPM).
+    latest_interim: dict[str, Cue] = {}
     # utteranceIds already finalized: late interim translations are dropped so they
     # cannot re-open the live line after the final was published.
     finalized: set[str] = set()
@@ -131,30 +134,37 @@ async def run_session(session_id: str) -> None:
 
     async def schedule_interim(original: Cue) -> None:
         uid = original.utteranceId
+        latest_interim[uid] = original
+        inflight = pending.get(uid)
+        if inflight is not None and not inflight.done():
+            return
 
         async def _debounced() -> None:
-            await asyncio.sleep(TRANSLATE_DEBOUNCE_MS / 1000)
-            if uid in finalized:
-                return
-            try:
-                results = await translate_batch([original], must=False)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning("interim translation failed: %s", exc)
-                return
-            if uid in finalized:
-                return
-            for d in DEST_TRACKS:
-                if d == original.sourceLang:
-                    continue
-                translated = results.get((original.id, d))
-                if translated is not None:
-                    store.publish_cue(session_id, translated)
+            while True:
+                await asyncio.sleep(TRANSLATE_DEBOUNCE_MS / 1000)
+                cue = latest_interim.get(uid)
+                if cue is None or uid in finalized:
+                    return
+                try:
+                    results = await translate_batch([cue], must=False)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("interim translation failed: %s", exc)
+                    return
+                if uid in finalized:
+                    return
+                for d in DEST_TRACKS:
+                    if d == cue.sourceLang:
+                        continue
+                    translated = results.get((cue.id, d))
+                    if translated is not None:
+                        store.publish_cue(session_id, translated)
+                # One follow-up if the line grew while this call was in flight.
+                newer = latest_interim.get(uid)
+                if newer is None or newer.id == cue.id or uid in finalized:
+                    return
 
-        old = pending.pop(uid, None)
-        if old and not old.done():
-            old.cancel()
         pending[uid] = asyncio.create_task(_debounced())
 
     try:
